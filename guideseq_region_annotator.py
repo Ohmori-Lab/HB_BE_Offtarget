@@ -1,20 +1,54 @@
 #!/usr/bin/env python3
 """
-GUIDE-seq off-target region annotator (hg38-ready)_Created by Nemekhbayar B. 
+GUIDE-seq off-target region annotator (hg38-ready)
+-----------------------------------------------------
 
-- Scans an input directory for "*identifiedOfftargets*.txt" (GUIDE-seq outputs)
-- Normalizes coordinates and signal
-- Annotates each site as exon / intron / intergenic using a GTF (e.g., GENCODE v46 for hg38)
-- Writes per-sample Excel summaries and PNG plots
-- Writes a combined summary across all samples
+Author: Nemekhbayar Baatartsogt <nemekhbayar@jichi.ac.jp>
+Date: 08/25/2025
+Version: 1.0.0
+
+Description:
+    This script annotates off-target regions identified in GUIDE-seq experiments. It processes 
+    the identified off-targets data files, normalizes genomic coordinates, and annotates regions 
+    (exon, intron, intergenic) using a GTF annotation file (e.g., GENCODE v46 for hg38). 
+    The results are saved in both summary Excel files and generated plots for further analysis.
 
 Usage:
-  python guideseq_region_annotator.py \
-    --input_dir /home/user/Desktop/guideseq/output/identified/Data_PAM_NNN \
-    --gtf /home/user/Desktop/Guideseq_Tsai/Human_genome/gencode.v46.annotation.gtf \
-    --out_dir /home/user/Desktop/guideseq/output/identified/annotated_hg38
+    python guideseq_region_annotator.py --input_dir <input_directory> --gtf <gtf_file> --out_dir <output_directory>
 
-Requires: pandas, numpy, matplotlib, (optional) xlsxwriter for Excel output
+    Arguments:
+        --input_dir <input_directory>    : Path to the directory containing GUIDE-seq off-targets files 
+                                          (e.g., `*identifiedOfftargets*.txt`).
+        --gtf <gtf_file>                 : Path to the GTF file containing genomic annotations (e.g., GENCODE v46 for hg38).
+        --out_dir <output_directory>     : Path to the output directory where the annotated results and summary reports 
+                                          (Excel files, plots) will be saved.
+
+    Example:
+        python guideseq_region_annotator.py --input_dir /path/to/identified_offtargets/ --gtf /path/to/genomes/hg38/gencode.v46.annotation.gtf --out_dir /path/to/annotated_results/
+
+    Output Files:
+        The script generates the following files:
+        - For each sample, an annotated Excel file (`offtarget_summary.xlsx`).
+        - Plots (PNG images) summarizing off-target distribution by region, mismatches, and chromosomes.
+        - A combined summary for all samples will be generated in the `_combined` directory, including:
+            - Combined Excel file (`combined_summary.xlsx`).
+            - Summary plots for the combined data.
+
+    Requirements:
+        - pandas
+        - numpy
+        - matplotlib
+        - xlsxwriter (optional, for Excel output)
+
+    Notes:
+        - Ensure that the GTF file corresponds to the genome version being used (e.g., hg38).
+        - The script automatically falls back to writing CSV files if the Excel writer fails.
+        - Input files must be in the appropriate format for processing by the script.
+
+    Error Handling:
+        - If the GTF file is not found or is in an invalid format, the script will exit with an error message.
+        - If the input directory contains no files matching the pattern, the script will issue a warning and exit.
+        - Invalid chromosome names or mismatched coordinates will be reported with details in the error logs.
 """
 
 import argparse
@@ -32,6 +66,15 @@ import matplotlib.pyplot as plt
 # Helpers
 # -----------------------------
 def normalize_chr(s: str) -> str:
+    """
+    Normalize chromosome names to 'chr1', 'chrX', 'chrY', etc.
+
+    Parameters:
+        s (str): Chromosome name as a string (e.g., "1", "X", "chr3").
+
+    Returns:
+        str: Normalized chromosome name, e.g., "chr1", "chrX".
+    """
     s = str(s)
     if s.startswith("chr"):
         return s
@@ -43,6 +86,15 @@ def normalize_chr(s: str) -> str:
 
 
 def merge_intervals(intervals: List[Tuple[int, int]]) -> List[Tuple[int, int]]:
+    """
+    Merge overlapping genomic intervals.
+
+    Parameters:
+        intervals (List[Tuple[int, int]]): List of tuples representing start and end positions.
+
+    Returns:
+        List[Tuple[int, int]]: Merged list of intervals.
+    """
     if not intervals:
         return []
     intervals = sorted(intervals)
@@ -57,6 +109,18 @@ def merge_intervals(intervals: List[Tuple[int, int]]) -> List[Tuple[int, int]]:
 
 
 def parse_gtf_to_intervals(gtf_file: Path):
+    """
+    Parse GTF file to extract exon and gene intervals.
+
+    Parameters:
+        gtf_file (Path): Path to the GTF file.
+
+    Returns:
+        Tuple[Dict[str, List[Tuple[int, int]]], Dict[str, List[Tuple[int, int]]]]:
+            A tuple containing two dictionaries:
+            - exons: Chromosome -> List of exon intervals.
+            - genes: Chromosome -> List of gene intervals.
+    """
     exons: Dict[str, List[Tuple[int, int]]] = defaultdict(list)
     genes: Dict[str, List[Tuple[int, int]]] = defaultdict(list)
     with gtf_file.open("r") as fh:
@@ -83,7 +147,16 @@ def parse_gtf_to_intervals(gtf_file: Path):
 
 
 def overlaps(intervals: List[Tuple[int, int]], x: int) -> bool:
-    # Linear scan; OK once merged. (Could be bisect for huge sets.)
+    """
+    Check if a position overlaps any of the intervals.
+
+    Parameters:
+        intervals (List[Tuple[int, int]]): List of intervals.
+        x (int): Position to check for overlap.
+
+    Returns:
+        bool: True if position overlaps any of the intervals, False otherwise.
+    """
     for s, e in intervals:
         if s <= x <= e:
             return True
@@ -93,6 +166,16 @@ def overlaps(intervals: List[Tuple[int, int]], x: int) -> bool:
 
 
 def annotate_region(chrom: str, pos: float, exons, genes) -> str:
+    """
+    Annotate genomic region as 'exon', 'intron', or 'intergenic'.
+
+    Parameters:
+        chrom (str): Chromosome name.
+        pos (float): Position to annotate.
+
+    Returns:
+        str: One of 'exon', 'intron', or 'intergenic'.
+    """
     if pd.isna(pos):
         return "unknown"
     if chrom in exons and overlaps(exons[chrom], int(pos)):
@@ -103,6 +186,15 @@ def annotate_region(chrom: str, pos: float, exons, genes) -> str:
 
 
 def pick_signal(df: pd.DataFrame) -> pd.Series:
+    """
+    Pick the appropriate signal column based on available data.
+
+    Parameters:
+        df (pd.DataFrame): DataFrame containing GUIDE-seq data.
+
+    Returns:
+        pd.Series: Series containing signal values.
+    """
     if "total.sum" in df.columns:
         return pd.to_numeric(df["total.sum"], errors="coerce").fillna(0)
     if "bi.sum.mi" in df.columns:
@@ -116,6 +208,15 @@ def pick_signal(df: pd.DataFrame) -> pd.Series:
 
 
 def extract_pos(df: pd.DataFrame) -> pd.Series:
+    """
+    Extract and normalize coordinates from the dataframe.
+
+    Parameters:
+        df (pd.DataFrame): DataFrame containing GUIDE-seq data.
+
+    Returns:
+        pd.DataFrame: DataFrame with normalized chromosome coordinates.
+    """
     if "Position" in df.columns and df["Position"].notna().any():
         return pd.to_numeric(df["Position"], errors="coerce")
     minpos = pd.to_numeric(df.get("Min.Position", np.nan), errors="coerce")
@@ -124,6 +225,15 @@ def extract_pos(df: pd.DataFrame) -> pd.Series:
 
 
 def extract_coords(df: pd.DataFrame) -> pd.DataFrame:
+    """
+    Extract and normalize chromosome coordinates and strand information.
+
+    Parameters:
+        df (pd.DataFrame): DataFrame containing GUIDE-seq data.
+
+    Returns:
+        pd.DataFrame: DataFrame with chromosome, position, start, end, strand, and coordinates.
+    """
     chrom = df["Chromosome"].astype(str).map(normalize_chr)
     pos = extract_pos(df)
     minpos = pd.to_numeric(df.get("Min.Position", pos), errors="coerce")
@@ -154,6 +264,15 @@ def extract_coords(df: pd.DataFrame) -> pd.DataFrame:
 
 
 def extract_mismatches(df: pd.DataFrame) -> pd.Series:
+    """
+    Extract mismatch data from the dataframe.
+
+    Parameters:
+        df (pd.DataFrame): DataFrame containing GUIDE-seq data.
+
+    Returns:
+        pd.Series: Series containing mismatch counts.
+    """
     mm_sub_only = pd.to_numeric(df.get("Site_SubstitutionsOnly.NumSubstitutions"), errors="coerce")
     mm_gap_sub = pd.to_numeric(df.get("Site_GapsAllowed.Substitutions"), errors="coerce")
     mm_gap_ins = pd.to_numeric(df.get("Site_GapsAllowed.Insertions"), errors="coerce")
@@ -170,6 +289,17 @@ def extract_mismatches(df: pd.DataFrame) -> pd.Series:
 # Output writers / plots
 # -----------------------------
 def make_plots(sample_outdir: Path, sites: pd.DataFrame, sample_name: str):
+    """
+    Generate and save summary plots for off-target data from GUIDE-seq results.
+
+    Parameters:
+        sample_outdir (Path): The directory where the plots will be saved. This directory 
+                               will be created if it doesn't already exist.
+        sites (pd.DataFrame): A DataFrame containing off-target data, including columns 
+                              for regions, mismatch counts, and chromosomal locations.
+        sample_name (str): The name of the sample, used for plot titles and file naming 
+                           to distinguish the plots from different samples.
+    """
     sample_outdir.mkdir(parents=True, exist_ok=True)
 
     # By region
@@ -181,6 +311,7 @@ def make_plots(sample_outdir: Path, sites: pd.DataFrame, sample_name: str):
     plt.xlabel("Region")
     plt.tight_layout()
     plt.savefig(sample_outdir / "plot_by_region.png", dpi=160)
+    plt.close()
 
     # By mismatch
     by_mismatch = (
@@ -197,6 +328,7 @@ def make_plots(sample_outdir: Path, sites: pd.DataFrame, sample_name: str):
     plt.xlabel("Mismatches")
     plt.tight_layout()
     plt.savefig(sample_outdir / "plot_by_mismatch.png", dpi=160)
+    plt.close()
 
     # By chromosome
     counts_per_chr = sites.groupby("chrom").size().sort_values(ascending=False)
@@ -207,9 +339,19 @@ def make_plots(sample_outdir: Path, sites: pd.DataFrame, sample_name: str):
     plt.xlabel("Chromosome")
     plt.tight_layout()
     plt.savefig(sample_outdir / "plot_by_chromosome.png", dpi=160)
+    plt.close()
 
 
 def write_excel(sample_outdir: Path, sites: pd.DataFrame):
+    """
+    Write off-target summary data to an Excel file (or CSV if Excel writer fails).
+
+    Parameters:
+        sample_outdir (Path): The directory where the Excel (or CSV) files will be saved. 
+                               This directory will be created if it doesn't exist.
+        sites (pd.DataFrame): A DataFrame containing off-target data, which will be summarized 
+                              and written to the output files.
+    """
     sample_outdir.mkdir(parents=True, exist_ok=True)
     out_xlsx = sample_outdir / "offtarget_summary.xlsx"
     try:
@@ -253,6 +395,19 @@ def write_excel(sample_outdir: Path, sites: pd.DataFrame):
 # Core processing
 # -----------------------------
 def process_one_file(path: Path, exons, genes, out_dir: Path) -> pd.DataFrame:
+    """
+    Process a single GUIDE-seq off-target file and generate annotated results.
+
+    Parameters:
+        path (Path): The file path to the input off-targets data file in tab-delimited format.
+        exons (dict): A dictionary containing chromosome -> list of exon intervals, parsed from a GTF file.
+        genes (dict): A dictionary containing chromosome -> list of gene intervals, parsed from a GTF file.
+        out_dir (Path): The directory where output files (Excel, plots) will be saved. This directory will be created if it doesn't exist.
+
+    Returns:
+        pd.DataFrame: A DataFrame containing the processed and annotated off-targets data for the sample.
+                      This includes the coordinates, mismatch counts, signal, and region annotations (exon/intron/intergenic).
+    """
     # Read & normalize
     df = pd.read_csv(path, sep="\t")
     df.columns = [re.sub(r"\s+", "_", c.strip()) for c in df.columns]
@@ -301,6 +456,29 @@ def process_one_file(path: Path, exons, genes, out_dir: Path) -> pd.DataFrame:
 # Main
 # -----------------------------
 def main():
+    """
+    Main function to orchestrate the GUIDE-seq off-target region annotation pipeline.
+
+    This function serves as the entry point for the script. It handles argument parsing, 
+    loading necessary input files (e.g., off-targets data and GTF file), and manages the 
+    overall process of annotating off-target sites. It processes multiple GUIDE-seq data files 
+    by reading, normalizing, annotating, and generating output files (Excel summaries and plots).
+    
+    The function performs the following tasks:
+    - Parses command-line arguments to specify input directory, GTF file, and output directory.
+    - Loads the GTF file and extracts exon and gene intervals.
+    - Iterates over all identified off-target files in the specified input directory.
+    - Processes each file to normalize data, annotate regions, and generate summaries.
+    - Writes the results for each sample to Excel and/or CSV, and generates summary plots.
+    - Combines data from all processed files and creates a final summary with combined results.
+
+    Parameters:
+        None: The function retrieves necessary inputs from command-line arguments.
+
+    Returns:
+        None: The function does not return any value. It processes files, generates output 
+              files (Excel and CSV), and produces visual plots.
+    """
     ap = argparse.ArgumentParser()
     ap.add_argument("--input_dir", required=True, help="Directory with *identifiedOfftargets*.txt files")
     ap.add_argument("--gtf", required=True, help="GTF file for hg38 (e.g., GENCODE v46)")
