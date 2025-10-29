@@ -540,6 +540,7 @@ def main():
     plt.xlabel("Region")
     plt.tight_layout()
     plt.savefig(comb_dir / "plot_by_region.png", dpi=160)
+    plt.close()
 
     plt.figure()
     by_mismatch = combined.groupby("mismatches").size().rename("count").reset_index().sort_values("mismatches")
@@ -549,6 +550,7 @@ def main():
     plt.xlabel("Mismatches")
     plt.tight_layout()
     plt.savefig(comb_dir / "plot_by_mismatch.png", dpi=160)
+    plt.close()
 
     plt.figure()
     combined.groupby("chrom").size().sort_values(ascending=False).plot(kind="bar")
@@ -557,6 +559,7 @@ def main():
     plt.xlabel("Chromosome")
     plt.tight_layout()
     plt.savefig(comb_dir / "plot_by_chromosome.png", dpi=160)
+    plt.close()
 
     print(f"[DONE] Wrote outputs to: {out_dir}")
 
